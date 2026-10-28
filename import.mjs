@@ -42,6 +42,7 @@ function parseArgs(argv) {
       const mc = Number(next());
       args.moodCutoff = Number.isFinite(mc) ? Math.min(1, Math.max(0, mc)) : 0.4;
     }
+    else if (a === '--apikey') args.apikey = next();
     else if (a === '--dry-run') args.dryRun = true;
     else if (a === '--overwrite') args.overwrite = true;
     else if (a === '-h' || a === '--help') args.help = true;
@@ -61,6 +62,9 @@ Usage:
 
 Options:
   --audiomuse-url <url>   AudioMuse base URL (or AUDIOMUSE_URL env). Required.
+  --apikey <token>        Bearer token for the AudioMuse API (or
+                          AUDIOMUSE_API_KEY env). Sent as
+                          "Authorization: Bearer <token>".
   --library-db <path>     Path to SUB/WAVE's library.db (default:
                           $STATE_DIR/library.db, else ./state/library.db).
   --overwrite             Overwrite existing bpm/moods/key/energy (default:
@@ -75,14 +79,16 @@ Options:
 Docs: https://github.com/getsubwave/audiomuse-import
 `;
 
-async function* iterateAudioMuseTracks(baseUrl, { limit } = {}) {
+async function* iterateAudioMuseTracks(baseUrl, { limit, apikey } = {}) {
   const root = baseUrl.replace(/\/+$/, '');
+  const headers = {};
+  if (apikey) headers.Authorization = `Bearer ${apikey}`;
   let page = 1;
   let seen = 0;
   let providerChecked = false;
   while (true) {
     const url = `${root}/api/sync?page=${page}&limit=500&include_embeddings=false`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers });
     if (!res.ok) {
       throw new Error(`GET ${url} -> ${res.status} ${res.statusText}`);
     }
@@ -218,6 +224,7 @@ async function main() {
     process.exit(1);
   }
 
+  const apikey = args.apikey || process.env.AUDIOMUSE_API_KEY;
   const stateDir = process.env.STATE_DIR || resolve(process.cwd(), 'state');
   const dbPath = args.libraryDb || resolve(stateDir, 'library.db');
   if (!existsSync(dbPath)) {
@@ -281,7 +288,7 @@ async function main() {
   // Buffer pages and commit in batches for a fast single transaction per chunk.
   let batch = [];
   const BATCH = 500;
-  for await (const t of iterateAudioMuseTracks(audiomuseUrl, { limit: args.limit })) {
+  for await (const t of iterateAudioMuseTracks(audiomuseUrl, { limit: args.limit, apikey })) {
     counts.seen++;
     batch.push(t);
     if (batch.length >= BATCH) {
